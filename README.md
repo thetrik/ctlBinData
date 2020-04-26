@@ -1,2 +1,2 @@
 # ctlBinData
- This UserControl allows to store data to your executable.
+ This UserControl allows to store binary files to your executable.

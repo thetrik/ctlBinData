@@ -1,0 +1,347 @@
+VERSION 5.00
+Begin VB.PropertyPage ppgUCBinary 
+   Caption         =   "Binary data"
+   ClientHeight    =   3480
+   ClientLeft      =   0
+   ClientTop       =   0
+   ClientWidth     =   4140
+   PaletteMode     =   0  'Halftone
+   ScaleHeight     =   3480
+   ScaleWidth      =   4140
+   Begin VB.CommandButton cmdrename 
+      Caption         =   "Rename..."
+      Height          =   375
+      Left            =   3120
+      TabIndex        =   3
+      Top             =   1020
+      Width           =   915
+   End
+   Begin VB.CommandButton cmdRemove 
+      Caption         =   "Remove..."
+      Height          =   375
+      Left            =   3120
+      TabIndex        =   2
+      Top             =   600
+      Width           =   915
+   End
+   Begin VB.CommandButton cmdAdd 
+      Caption         =   "Add..."
+      Height          =   375
+      Left            =   3120
+      TabIndex        =   1
+      Top             =   180
+      Width           =   915
+   End
+   Begin VB.ListBox lstFiles 
+      Height          =   2595
+      Left            =   120
+      TabIndex        =   0
+      Top             =   120
+      Width           =   2895
+   End
+   Begin VB.Label lblFileInfo 
+      ForeColor       =   &H00FF0000&
+      Height          =   555
+      Left            =   120
+      TabIndex        =   4
+      Top             =   2820
+      Width           =   3915
+   End
+End
+Attribute VB_Name = "ppgUCBinary"
+Attribute VB_GlobalNameSpace = False
+Attribute VB_Creatable = False
+Attribute VB_PredeclaredId = False
+Attribute VB_Exposed = False
+' //
+' // ppgUCBinary.pag
+' // Property page for ctlBinData.ctl
+' // By The trick 2020
+' //
+
+Option Explicit
+
+Private Const FILE_ATTRIBUTE_NORMAL   As Long = &H80
+Private Const INVALID_HANDLE_VALUE    As Long = -1
+Private Const GENERIC_READ            As Long = &H80000000
+Private Const OPEN_EXISTING           As Long = 3
+Private Const FILE_SHARE_READ         As Long = &H1
+
+Private Type LARGE_INTEGER
+    lowPart             As Long
+    highPart            As Long
+End Type
+
+Private Type OPENFILENAME
+    lStructSize         As Long
+    hwndOwner           As Long
+    hInstance           As Long
+    lpstrFilter         As Long
+    lpstrCustomFilter   As Long
+    nMaxCustFilter      As Long
+    nFilterIndex        As Long
+    lpstrFile           As Long
+    nMaxFile            As Long
+    lpstrFileTitle      As Long
+    nMaxFileTitle       As Long
+    lpstrInitialDir     As Long
+    lpstrTitle          As Long
+    flags               As Long
+    nFileOffset         As Integer
+    nFileExtension      As Integer
+    lpstrDefExt         As Long
+    lCustData           As Long
+    lpfnHook            As Long
+    lpTemplateName      As Long
+End Type
+
+Private Declare Function CreateFile Lib "kernel32" _
+                         Alias "CreateFileW" ( _
+                         ByVal lpFileName As Long, _
+                         ByVal dwDesiredAccess As Long, _
+                         ByVal dwShareMode As Long, _
+                         ByRef lpSecurityAttributes As Any, _
+                         ByVal dwCreationDisposition As Long, _
+                         ByVal dwFlagsAndAttributes As Long, _
+                         ByVal hTemplateFile As Long) As Long
+Private Declare Function ReadFile Lib "kernel32" ( _
+                         ByVal hFile As Long, _
+                         ByRef lpBuffer As Any, _
+                         ByVal nNumberOfBytesToRead As Long, _
+                         ByRef lpNumberOfBytesRead As Long, _
+                         ByRef lpOverlapped As Any) As Long
+Private Declare Function CloseHandle Lib "kernel32" ( _
+                         ByVal hObject As Long) As Long
+Private Declare Function GetFileSizeEx Lib "kernel32" ( _
+                         ByVal hFile As Long, _
+                         ByRef lpFileSize As LARGE_INTEGER) As Long
+Private Declare Function GetOpenFileName Lib "comdlg32.dll" _
+                         Alias "GetOpenFileNameW" ( _
+                         pOpenfilename As OPENFILENAME) As Long
+Private Declare Function PathFindFileName Lib "Shlwapi" _
+                         Alias "PathFindFileNameW" ( _
+                         ByVal pszPath As Long) As Long
+Private Declare Function PathFindExtension Lib "Shlwapi" _
+                         Alias "PathFindExtensionW" ( _
+                         ByVal pszPath As Long) As Long
+
+Private m_bChanged  As Boolean
+Private m_cControl  As ctlBinData
+
+Private Function GetOpenFile( _
+                 ByVal hWnd As Long, _
+                 ByRef sTitle As String, _
+                 ByRef sFilter As String) As String
+    Dim tOfn            As OPENFILENAME
+    Dim strInputFile    As String
+    
+    With tOfn
+    
+        .nMaxFile = 260
+        strInputFile = String$(.nMaxFile, vbNullChar)
+        
+        .hwndOwner = hWnd
+        .lpstrTitle = StrPtr(sTitle)
+        .lpstrFile = StrPtr(strInputFile)
+        .lStructSize = Len(tOfn)
+        .lpstrFilter = StrPtr(sFilter)
+        
+        If GetOpenFileName(tOfn) = 0 Then Exit Function
+        
+        GetOpenFile = Left$(strInputFile, InStr(1, strInputFile, vbNullChar) - 1)
+        
+    End With
+
+End Function
+
+Private Sub cmdAdd_Click()
+    Dim sFileName   As String
+    Dim sPath       As String
+    Dim bData()     As Byte
+    Dim hFile       As Long
+    Dim tSize       As LARGE_INTEGER
+    
+    On Error GoTo error_handler
+    
+    sPath = GetOpenFile(PropertyPage.hWnd, "Open file", "All files" & vbNullChar & "*.*" & vbNullChar)
+    If Len(sPath) = 0 Then Exit Sub
+    
+    hFile = CreateFile(StrPtr(sPath), GENERIC_READ, FILE_SHARE_READ, ByVal 0&, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, 0)
+    If hFile = INVALID_HANDLE_VALUE Then
+        MsgBox "Unable to open file", vbCritical
+        GoTo error_handler
+    End If
+    
+    If GetFileSizeEx(hFile, tSize) = 0 Then
+        MsgBox "Unable to get file size", vbCritical
+        GoTo error_handler
+    End If
+    
+    If tSize.highPart <> 0 Or tSize.lowPart > 10000000 Then
+        MsgBox "Invalid file size", vbCritical
+        GoTo error_handler
+    End If
+    
+    If tSize.lowPart > 0 Then
+        
+        ReDim bData(tSize.lowPart - 1)
+        
+        If ReadFile(hFile, bData(0), tSize.lowPart, tSize.lowPart, ByVal 0&) = 0 Then
+            MsgBox "Unable to read data", vbCritical
+            GoTo error_handler
+        End If
+        
+    End If
+    
+    CloseHandle hFile:  hFile = 0
+        
+    sFileName = GetFileName(sPath)
+    
+    Do While m_cControl.Exists(sFileName)
+        sFileName = GetNextName(sFileName)
+    Loop
+    
+    m_cControl.AddFile sFileName, bData
+    
+    lstFiles.AddItem sFileName
+    lstFiles_Click
+    
+    PropertyPage.Changed = True
+    
+error_handler:
+    
+    If hFile <> INVALID_HANDLE_VALUE And hFile <> 0 Then
+        CloseHandle hFile
+    End If
+    
+End Sub
+
+Private Function GetNextName( _
+                 ByRef sFileName As String) As String
+    Dim pExt    As Long
+    Dim pPath   As Long
+    Dim sExt    As String
+    Dim sTitle  As String
+    Dim sNumber As String
+    Dim lBr(1)  As Long
+    Dim lIndex  As Long
+    
+    pPath = StrPtr(sFileName)
+    pExt = PathFindExtension(pPath)
+    
+    sExt = Mid$(sFileName, (pExt - pPath) \ 2 + 1)
+    sTitle = Mid$(sFileName, 1, (pExt - pPath) \ 2)
+                     
+    lBr(1) = InStrRev(sTitle, ")")
+    If lBr(1) Then
+        lBr(0) = InStrRev(sTitle, "(", lBr(1) - 1)
+        If lBr(0) Then
+            sNumber = Mid$(sTitle, lBr(0) + 1, lBr(1) - lBr(0) - 1)
+            If IsNumeric(sNumber) Then
+                lIndex = CLng(sNumber)
+                sTitle = Left$(sTitle, lBr(0) - 1)
+            End If
+        End If
+    End If
+    
+    lIndex = lIndex + 1
+    
+    GetNextName = sTitle & "(" & CStr(lIndex) & ")" & sExt
+                     
+End Function
+
+Private Function GetFileName( _
+                 ByRef sFullPath As String) As String
+    Dim pFile   As Long
+    Dim pPath   As Long
+    
+    pPath = StrPtr(sFullPath)
+    pFile = PathFindFileName(pPath)
+    
+    GetFileName = Mid$(sFullPath, (pFile - pPath) \ 2 + 1)
+    
+End Function
+
+Private Sub cmdRemove_Click()
+    Dim lIndex  As Long
+    
+    lIndex = lstFiles.ListIndex
+    If lIndex = -1 Then Exit Sub
+    
+    If MsgBox("Are you sure?", vbQuestion Or vbYesNo) <> vbYes Then Exit Sub
+        
+    m_cControl.RemoveFile lstFiles.List(lIndex)
+    lstFiles.RemoveItem lIndex
+    lstFiles_Click
+
+    PropertyPage.Changed = True
+    
+End Sub
+
+Private Sub cmdRename_Click()
+    Dim lIndex  As Long
+    Dim sName   As String
+    
+    lIndex = lstFiles.ListIndex
+    If lIndex = -1 Then Exit Sub
+    
+    Do
+    
+        sName = InputBox("Enter name", "Rename file", lstFiles.List(lIndex))
+        If Len(sName) = 0 Then Exit Sub
+        
+        If StrComp(sName, lstFiles.List(lIndex), vbTextCompare) = 0 Then
+            Exit Sub
+        ElseIf m_cControl.Exists(sName) Then
+            MsgBox "This name already exists", vbInformation
+        Else
+            m_cControl.RenameFile lstFiles.List(lIndex), sName
+            Exit Do
+        End If
+        
+    Loop While True
+    
+    PropertyPage.Changed = True
+    
+End Sub
+
+Private Sub lstFiles_Click()
+    Dim lIndex  As Long
+    
+    lIndex = lstFiles.ListIndex
+    If lIndex = -1 Then Exit Sub
+    
+    If lIndex >= 0 Then
+        lblFileInfo.Caption = "File size: " & m_cControl.FileSize(lstFiles.List(lIndex))
+    Else
+        lblFileInfo.Caption = vbNullString
+    End If
+    
+End Sub
+
+Private Sub PropertyPage_SelectionChanged()
+    Dim sList() As String
+    Dim lIndex  As Long
+    
+    On Error GoTo error_handler
+    
+    lstFiles.Clear
+    lblFileInfo.Caption = vbNullString
+    
+    Set m_cControl = SelectedControls.Item(0)
+    
+    If m_cControl.FilesCount Then
+    
+        sList = m_cControl.FilesList
+        
+        For lIndex = 0 To UBound(sList)
+            lstFiles.AddItem sList(lIndex)
+        Next
+        
+        lstFiles.ListIndex = 0
+        
+    End If
+    
+error_handler:
+    
+End Sub
